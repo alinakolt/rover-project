@@ -1,0 +1,255 @@
+users_seen = set()
+
+# Библиотеки для Telegram бота
+from aiogram import Bot, Dispatcher
+from aiogram.filters import Command  # Для команд: /start, /help
+from aiogram.types import Message  # Для работы с сообщениями
+
+# Встроенные библиотеки Python
+import sqlite3  # Для базы данных
+import asyncio  # Для асинхронного кода
+import random  # Для случайного выбора слов
+
+TOKEN = "8415294070:AAFRW7U-bwsT-SJxGvbG6yZknLKmz6oc6qg"
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
+DB_FILE = "words.db"  # Имя файла базы данных
+current_quiz = {}  # Словарь для хранения текущих квизов {user_id: правильный_ответ}
+users_seen = set()  # Множество для отслеживания пользователей, которые уже нажали старт
+
+
+def create_database():
+    """
+    Создаем базу данных для хранения слов.
+    """
+    conn = sqlite3.connect(DB_FILE)  # Подключаемся к базе данных
+    cursor = conn.cursor()
+    # Создаем таблицу "words"
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS words (
+        id INTEGER PRIMARY KEY,      -- Номер записи (1, 2, 3...)
+        user_id INTEGER,             -- ID пользователя Telegram
+        word TEXT,                   -- Слово на иностранном
+        translation TEXT             -- Перевод
+    )
+    ''')
+    conn.commit()  # Сохраняем изменения
+    conn.close()
+    print("✅ База данных создана!")
+
+
+def save_word(user_id, word, translation):
+    """
+    Сохраняет слово в базу данных.
+
+    """
+    conn = sqlite3.connect(DB_FILE)  # Открываем базу данных
+    cursor = conn.cursor()
+    # Вставляем новую запись
+    cursor.execute(
+        "INSERT INTO words (user_id, word, translation) VALUES (?, ?, ?)",
+        (user_id, word, translation)  # Подставляется вместо ? ? ?
+    )
+    conn.commit()  # Сохраняем и закрываем
+    conn.close()
+
+    print(f"✅ Слово сохранено: {word} - {translation}")
+
+
+def get_user_words(user_id):
+    """
+    Получает все слова пользователя из базы.
+    """
+    conn = sqlite3.connect(DB_FILE)  # Открываем базу
+    cursor = conn.cursor()
+    cursor.execute(  # Ищем слова этого пользователя
+        "SELECT word, translation FROM words WHERE user_id = ?",
+        (user_id,)  # Ищем только слова этого пользователя
+    )
+    words = cursor.fetchall()  # Получаем список слов
+    conn.close()  # Закрываем базу
+
+    return words  # Возвращаем слова
+
+
+@dp.message(Command("start"))
+async def start_command(message: Message):
+    """
+    Обрабатывает команду /start.
+
+    """
+    user_id = message.from_user.id
+    users_seen.add(user_id)  # Добавляем пользователя в множество
+
+    await message.answer(
+        "👋 Привет! Я бот для изучения слов.\n\n"
+        "📝 Отправь мне слово и перевод через тире:\n"
+        "<code>apple - яблоко</code>\n\n"
+        "📚 Посмотреть слова: /words\n"
+        "🎯 Квиз: /quiz\n"
+        "❓ Помощь: /help",
+        parse_mode="HTML"
+    )
+
+
+@dp.message(Command("help"))
+async def help_command(message: Message):
+    """
+    Обрабатывает команду /help.
+    Показывает инструкцию.
+
+    """
+    help_text = """
+📖 <b>Помощь по боту:</b>
+
+<b>Добавить слово:</b>
+Просто отправь слово и перевод:
+<code>hello - привет</code>
+<code>book - книга</code>
+
+<b>Команды:</b>
+/start - Начать
+/help - Эта справка  
+/words - Мои слова
+/quiz - Квиз с проверкой
+
+<b>Примеры:</b>
+dog - собака
+cat - кот
+house - дом
+    """
+
+    await message.answer(help_text, parse_mode="HTML")
+
+
+@dp.message(Command("words"))
+async def words_command(message: Message):
+    """
+    Показывает все слова пользователя.
+
+    """
+    user_id = message.from_user.id  # Получаем ID пользователя
+    words = get_user_words(user_id)  # Получаем слова из базы данных
+    # Если слов нет
+    if not words:
+        await message.answer("📭 У тебя пока нет слов. Добавь первое!")
+        return
+
+    # Формируем список слов
+    result = "📚 <b>Твои слова:</b>\n\n"
+
+    for i, (word, translation) in enumerate(words, 1):
+        result += f"{i}. <code>{word}</code> - {translation}\n"
+
+    await message.answer(result, parse_mode="HTML")
+
+
+@dp.message(Command("quiz"))
+async def quiz_command(message: Message):
+    """
+    Квиз - показывает слово и проверяет ответ.
+
+    """
+    user_id = message.from_user.id  # Получаем ID пользователя
+    words = get_user_words(user_id)  # Получаем слова пользователя
+    # Проверяем есть ли слова
+    if not words:
+        await message.answer("📭 Сначала добавь слова командой /words!")
+        return
+
+    word, correct = random.choice(
+        words)  # Выбираем случайное слово , word = английское слово (например: "apple"), correct = правильный перевод (например: "яблоко")
+    current_quiz[user_id] = correct  # Запоминаем правильный ответ для этого пользователя
+    # Отправляем вопрос
+    await message.answer(
+        f"🎯 <b>Квиз:</b>\n\n"
+        f"Как переводится слово:\n"
+        f"<code>{word}</code>\n\n"
+        f"Напиши перевод в сообщении!\n",
+        parse_mode="HTML"
+    )
+
+
+@dp.message()
+async def handle_text(message: Message):
+    """
+    Обрабатывает все обычные сообщения.
+    Автоматически отправляет /start для новых пользователей.
+    """
+    user_id = message.from_user.id
+
+    # Проверяем, новый ли пользователь
+    if user_id not in users_seen:
+        users_seen.add(user_id)  # Добавляем в множество
+        # Автоматически отправляем приветствие
+        await start_command(message)
+        return
+
+    text = message.text.strip()
+
+    # проверка ответ ли это на квиз
+    if user_id in current_quiz:
+        user_answer = text.lower()  # Ответ пользователя
+        correct_answer = current_quiz[user_id].lower()  # Правильный ответ
+        if user_answer == correct_answer:  # Проверяем ответ
+            await message.answer(
+                f"✅ <b>Правильно! Отлично! 🎉</b>\n\n"
+                f"Следующий вопрос: /quiz",
+                parse_mode="HTML"
+            )
+        else:
+            # Неправильный ответ
+            await message.answer(
+                f"❌ <b>Неправильно...</b>\n\n"
+                f"Правильный ответ: <b>{current_quiz[user_id]}</b>\n\n"
+                f"Попробуй еще раз: /quiz",
+                parse_mode="HTML"
+            )
+        del current_quiz[user_id]  # Удаляем квиз (чтобы следующий ответ не проверялся как квиз)
+        return  # Выходим из функции
+
+    # проверка добавление ли это слова
+    if " - " in text:
+        parts = text.split(" - ")
+        if len(parts) == 2:
+            word = parts[0].strip()
+            translation = parts[1].strip()
+
+            if word and translation:  # Сохраняем в базу
+                save_word(user_id, word, translation)
+                await message.answer(  # Отправляем подтверждение
+                    f"✅ <b>Слово сохранено!</b>\n\n"
+                    f"<code>{word}</code> → {translation}\n\n"
+                    f"Всего слов: /words\n"
+                    f"Квиз: /quiz",
+                    parse_mode="HTML"
+                )
+                return
+    await message.answer(  # Если другой формат сообщения
+        "🤔 <b>Не понял...</b>\n\n"
+        "<b>Добавить слово:</b>\n"
+        "<code>apple - яблоко</code>\n\n"
+        "<b>Команды:</b>\n"
+        "/start - Начать\n"
+        "/help - Помощь\n"
+        "/words - Мои слова\n"
+        "/quiz - Квиз",
+        parse_mode="HTML"
+    )
+
+
+# ЗАПУСК БОТА
+
+async def main():
+    """
+    Главная функция, запускает бота.
+
+    """
+    print("🤖 Запускаю бота...")
+    create_database()  # Создаем базу данных
+    await dp.start_polling(bot)  # Запускаем бота
+
+
+if __name__ == "__main__":  # Точка входа в программу
+    # Запускаем асинхронную функцию main()
+    asyncio.run(main())
